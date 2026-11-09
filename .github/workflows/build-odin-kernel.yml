@@ -56,7 +56,7 @@ jobs:
           git clone --depth=1 https://github.com/SukiSU-Ultra/SukiSU-Ultra.git sukisu
           cd sukisu && git log -1 --oneline
           mkdir -p $GITHUB_WORKSPACE/kernel/drivers/kernelsu
-          cp -rL sukisu/kernel/. $GITHUB_WORKSPACE/kernel/drivers/kernelsu/
+          cp -rL $GITHUB_WORKSPACE/sukisu/kernel/. $GITHUB_WORKSPACE/kernel/drivers/kernelsu/
           cd $GITHUB_WORKSPACE/kernel
           ls drivers/kernelsu | head -20
           echo "== uapi 头 =="
