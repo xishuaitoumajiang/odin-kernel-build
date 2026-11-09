@@ -62,6 +62,12 @@ jobs:
           grep -n "KSU_SYSCALL_TABLE_HOOK" drivers/kernelsu/Kconfig
           grep -n kernelsu drivers/Makefile drivers/Kconfig || true
 
+      - name: 5b. 修 patch_memory.c 的 __p4d_to_phys（5.4 无此函数）
+        run: |
+          cd $GITHUB_WORKSPACE/kernel
+          python3 -c "p='drivers/kernelsu/hook/patch_memory.c'; s=open(p).read(); s=s.replace('#if defined(p4d_leaf)', '#if defined(p4d_leaf) && defined(__p4d_to_phys)').replace('#if defined(pud_leaf)', '#if defined(pud_leaf) && defined(__pud_to_phys)').replace('#if defined(pmd_leaf)', '#if defined(pmd_leaf) && defined(__pmd_to_phys)'); open(p,'w').write(s); print('p4d guard patched')"
+          grep -n 'defined(p4d_leaf)' drivers/kernelsu/hook/patch_memory.c
+
       - name: 6. 修 struct vm_fault 的 const 匿名结构
         run: |
           cd $GITHUB_WORKSPACE/kernel
