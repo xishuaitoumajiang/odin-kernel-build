@@ -18,11 +18,11 @@ jobs:
 
       - name: 1. 释放磁盘空间
         run: |
-          echo "== 清理前 =="; df -h /
+          df -h /
           sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL 2>/dev/null || true
           sudo rm -rf /usr/local/share/boost 2>/dev/null || true
           sudo apt-get clean
-          echo "== 清理后 =="; df -h /
+          df -h /
 
       - name: 2. 安装构建依赖
         run: |
@@ -37,17 +37,15 @@ jobs:
           cd $HOME
           curl -sSL -o clang.tar.gz \
             "https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/tags/android-11.0.0_r48/clang-r383902b1.tar.gz"
-          ls -lh clang.tar.gz
           mkdir -p clang && tar -xzf clang.tar.gz -C clang
           ./clang/bin/clang --version | head -2
 
-      - name: 4. 拉取内核源码并移除树内旧版 kernelsu
+      - name: 4. 拉取内核源码（保留树内 kernelsu）
         run: |
           cd $GITHUB_WORKSPACE
           git clone --depth=1 -b master https://github.com/MrNya907/xiaomi_kernel_odin.git kernel
           cd kernel && git log -1 --oneline
-          rm -rf drivers/kernelsu
-          grep -n kernelsu drivers/Makefile drivers/Kconfig || true
+          ls drivers/kernelsu | head -10
 
       - name: 5. 打 Mix4 SukiSU 移植补丁
         run: |
@@ -57,42 +55,42 @@ jobs:
           git apply -p1 --reject --whitespace=nowarn /tmp/odin.patch > /tmp/patch.log 2>&1
           echo "git apply exit=$?"
           set -e
-          echo "== 失败/跳过统计 =="
-          grep -cE 'error:|rejected|No such file' /tmp/patch.log || true
-          grep -E 'error:|rejected|No such file' /tmp/patch.log | head -30 || true
-          echo "== 生成 .rej 的文件 =="
+          echo "== 失败项 =="
+          grep -E 'error:|rejected' /tmp/patch.log | head -30 || true
+          echo "== .rej 文件 =="
           find . -name '*.rej' | head -20
-          echo "== 驱动目录 =="
-          ls drivers/kernelsu | head -20
+          echo "== 新驱动 =="
+          ls drivers/kernelsu | head -25
           echo "== 版本号 =="
           grep -rn "KSU_VERSION" drivers/kernelsu/Makefile | head -3
-          echo "== seccomp 改动是否到位 =="
-          grep -n "ksu" kernel/seccomp.c | head -10
+          echo "== 是否含 susfs 扩展 =="
+          ls drivers/kernelsu/extension 2>/dev/null | head
 
-      - name: 6. 修 5.4 缺 linux/pgtable.h + struct vm_fault const
+      - name: 6. 修 5.4 兼容（pgtable / vm_fault const）
         run: |
           cd $GITHUB_WORKSPACE/kernel
           find drivers/kernelsu -name '*.c' -o -name '*.h' | xargs grep -ln 'linux/pgtable.h' 2>/dev/null | while read f; do
             sed -i 's|#include <linux/pgtable.h>|#include <asm/pgtable.h>|' "$f"; echo "pgtable fixed: $f"
           done
-          find drivers/kernelsu -name '*.rej' -delete 2>/dev/null || true
           python3 -c "p='include/linux/mm.h'; s=open(p).read(); i=s.index('struct vm_fault {'); j=s.index(chr(10)+'};', i); blk=s[i:j]; s2=s[:i]+(blk.replace(chr(9)+'const struct {', chr(9)+'struct {', 1) if (chr(9)+'const struct {') in blk else blk)+s[j:]; open(p,'w').write(s2); print('vm_fault fixed' if s2!=s else 'no const found')"
 
-      - name: 7. 写入 defconfig（SukiSU + susfs）
+      - name: 7. 用作者配置当基底
         run: |
           cd $GITHUB_WORKSPACE/kernel
-          printf '%s\n' '' '# ---- SukiSU-Ultra + susfs ----' 'CONFIG_KSU=y' 'CONFIG_KSU_MANUAL_SU=y' 'CONFIG_KSU_SUSFS=y' 'CONFIG_KSU_SUSFS_HAS_MAGIC_MOUNT=y' 'CONFIG_KSU_SUSFS_SUS_PATH=y' 'CONFIG_KSU_SUSFS_SUS_MOUNT=y' 'CONFIG_KSU_SUSFS_AUTO_ADD_SUS_KSU_DEFAULT_MOUNT=y' 'CONFIG_KSU_SUSFS_AUTO_ADD_SUS_BIND_MOUNT=y' 'CONFIG_KSU_SUSFS_SUS_KSTAT=y' 'CONFIG_KSU_SUSFS_TRY_UMOUNT=y' 'CONFIG_KSU_SUSFS_AUTO_ADD_TRY_UMOUNT_FOR_BIND_MOUNT=y' 'CONFIG_KSU_SUSFS_SPOOF_UNAME=y' 'CONFIG_KSU_SUSFS_ENABLE_LOG=y' 'CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS=y' 'CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG=y' 'CONFIG_KSU_SUSFS_OPEN_REDIRECT=y' 'CONFIG_KSU_SUSFS_SUS_SU=y' '# CONFIG_KPM is not set' 'CONFIG_KPROBES=y' 'CONFIG_KRETPROBES=y' 'CONFIG_KALLSYMS=y' 'CONFIG_KALLSYMS_ALL=y' 'CONFIG_MODULES=y' 'CONFIG_OVERLAY_FS=y' 'CONFIG_TMPFS_XATTR=y' 'CONFIG_TMPFS_POSIX_ACL=y' 'CONFIG_EXT4_FS=y' >> arch/arm64/configs/odin_defconfig
-          tail -30 arch/arm64/configs/odin_defconfig
+          ls -l config_prev_backup.config
+          mkdir -p out
+          cp config_prev_backup.config out/.config
+          printf '%s\n' 'CONFIG_KSU=y' 'CONFIG_KSU_FEATURE_ADBROOT=y' '# CONFIG_KSU_DEBUG is not set' '# CONFIG_KPM is not set' >> out/.config
+          export PATH=$HOME/clang/bin:$PATH
+          make O=out ARCH=arm64 CC=clang LLVM=1 LLVM_IAS=1 CLANG_TRIPLE=aarch64-linux-gnu- CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi- olddefconfig > cfg.log 2>&1 || { tail -40 cfg.log; exit 1; }
+          grep -E "KSU|SUSFS|KPM|KALLSYMS_ALL|LOCALVERSION" out/.config | head -20
 
       - name: 8. 编译内核
         run: |
           cd $GITHUB_WORKSPACE/kernel
           export PATH=$HOME/clang/bin:$PATH
-          make -j$(nproc) O=out ARCH=arm64 CC=clang LLVM=1 LLVM_IAS=1 CLANG_TRIPLE=aarch64-linux-gnu- CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi- odin_defconfig > cfg.log 2>&1 || { tail -40 cfg.log; exit 1; }
-          echo "== config 关键项 =="
-          grep -E "KSU|SUSFS|KPROBES=|KALLSYMS_ALL|EXT4_FS=" out/.config | head -40
           set -o pipefail
-          make -j$(nproc) O=out ARCH=arm64 CC=clang LLVM=1 LLVM_IAS=1 CLANG_TRIPLE=aarch64-linux-gnu- CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi- Image 2>&1 | tee build.log | grep -E "error|Error|Image" | tail -60 || true
+          make -j$(nproc) O=out ARCH=arm64 CC=clang LLVM=1 LLVM_IAS=1 CLANG_TRIPLE=aarch64-linux-gnu- CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi- Image 2>&1 | tee build.log | grep -E "error|Error|Image" | tail -80 || true
           ls -lh out/arch/arm64/boot/Image*
 
       - name: 9. 收集产物
