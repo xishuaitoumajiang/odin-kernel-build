@@ -54,12 +54,12 @@ jobs:
           cd $GITHUB_WORKSPACE/kernel
           cp $GITHUB_WORKSPACE/kernel_patches/odin_b11_full.patch /tmp/odin.patch
           set +e
-          patch -p1 --forward --batch --fuzz=3 < /tmp/odin.patch > /tmp/patch.log 2>&1
-          echo "patch exit=$?"
+          git apply -p1 --reject --whitespace=nowarn /tmp/odin.patch > /tmp/patch.log 2>&1
+          echo "git apply exit=$?"
           set -e
           echo "== 失败/跳过统计 =="
-          grep -cE 'FAILED|Reversed|Skip' /tmp/patch.log || true
-          grep -E 'FAILED|Reversed|Skip' /tmp/patch.log | head -30 || true
+          grep -cE 'error:|rejected|No such file' /tmp/patch.log || true
+          grep -E 'error:|rejected|No such file' /tmp/patch.log | head -30 || true
           echo "== 生成 .rej 的文件 =="
           find . -name '*.rej' | head -20
           echo "== 驱动目录 =="
