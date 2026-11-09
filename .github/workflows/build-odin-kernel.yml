@@ -61,17 +61,28 @@ jobs:
           curl -LSs "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/next/kernel/setup.sh" | bash -s legacy
           echo "== 注入结果 =="
           ls -d KernelSU* 2>/dev/null || true
-          grep -n "KernelSU" Makefile | head -5 || true
-          grep -n "KSU" drivers/Kconfig 2>/dev/null | head -5 || true
+          git status --short | head -20
+          echo "== KSU Kconfig 符号 =="
+          grep -rn "config KSU" KernelSU-Next/kernel/Kconfig 2>/dev/null | head -20 || true
 
-      - name: 6. 打 susfs k5.4 补丁
+      - name: 6. 尝试 susfs k5.4 补丁 (失败自动回滚)
+        id: susfs
         run: |
           cd $GITHUB_WORKSPACE
           git clone --depth=1 -b k5.4 https://github.com/dev-sm8350/susfs4ksu.git susfs
-          ls susfs/kernel_patches/
           cd kernel
-          patch -p1 --forward < ../susfs/kernel_patches/50_add_susfs_in_kernel-5.4.patch
-          echo "== 补丁完成 =="
+          P=$GITHUB_WORKSPACE/susfs/kernel_patches/50_add_susfs_in_kernel-5.4.patch
+          if patch -p1 --forward --dry-run < $P > /tmp/susfs_dry.log 2>&1; then
+            patch -p1 --forward < $P
+            echo "SUSFS=1" >> $GITHUB_ENV
+            echo "susfs 补丁全部命中"
+          else
+            echo "== dry-run 未通过，回滚 =="
+            head -40 /tmp/susfs_dry.log
+            git checkout -- . && git clean -fd
+            echo "SUSFS=0" >> $GITHUB_ENV
+            echo "SUSFS 这一轮跳过，只出 KernelSU-Next 版"
+          fi
 
       - name: 7. 写入 defconfig 开关
         run: |
@@ -83,12 +94,14 @@ jobs:
           CONFIG_KSU_KPROBE_HOOKS=y
           CONFIG_KPROBES=y
           CONFIG_KPROBE_EVENTS=y
-          CONFIG_HAVE_KPROBES=y
           CONFIG_KALLSYMS_ALL=y
           CONFIG_MODULES=y
           CONFIG_OVERLAY_FS=y
           CONFIG_TMPFS_XATTR=y
           CONFIG_TMPFS_POSIX_ACL=y
+          EOF
+          if [ "$SUSFS" = "1" ]; then
+            cat >> arch/arm64/configs/odin_defconfig <<'EOF'
           # ---- susfs ----
           CONFIG_KSU_SUSFS=y
           CONFIG_KSU_SUSFS_SUS_PATH=y
@@ -98,7 +111,8 @@ jobs:
           CONFIG_KSU_SUSFS_ENABLE_LOG=y
           CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS=y
           EOF
-          tail -22 arch/arm64/configs/odin_defconfig
+          fi
+          echo "SUSFS 状态: $SUSFS"
 
       - name: 8. 编译内核
         run: |
@@ -108,9 +122,12 @@ jobs:
           export CC=clang CLANG_TRIPLE=aarch64-linux-gnu-
           export CROSS_COMPILE=aarch64-linux-gnu-
           make -j$(nproc) O=out ARCH=arm64 odin_defconfig > cfg.log 2>&1 || { tail -40 cfg.log; exit 1; }
-          grep -E "CONFIG_KSU|CONFIG_KSU_SUSFS" out/.config | head -20
+          echo "== config 里的 KSU =="
+          grep -E "CONFIG_KSU|CONFIG_KPROBES=|CONFIG_KALLSYMS_ALL" out/.config | head -20
+          echo "== 警告/未知符号 =="
+          grep -iE "unknown|ignoring" cfg.log | head -10 || true
           set -o pipefail
-          make -j$(nproc) O=out ARCH=arm64 2>&1 | tee build.log | tail -80
+          make -j$(nproc) O=out ARCH=arm64 2>&1 | tee build.log | tail -60
           echo "== 产物 =="
           ls -lh out/arch/arm64/boot/ 2>/dev/null || true
 
