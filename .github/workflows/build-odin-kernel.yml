@@ -44,59 +44,52 @@ jobs:
           git clone --depth=1 -b master https://github.com/MrNya907/xiaomi_kernel_odin.git kernel
           cd kernel && git log -1 --oneline
           rm -rf drivers/kernelsu
-          echo "== 删除后剩余引用 =="
           grep -n kernelsu drivers/Makefile drivers/Kconfig || true
-          echo "== 树内 susfs =="
-          ls -l fs/susfs.c fs/sus_su.c include/linux/susfs.h 2>/dev/null || echo 无
-          grep -n susfs fs/Makefile || true
 
-      - name: 5. 换成 SukiSU-Ultra 4.x 驱动源码
+      - name: 5. 打 Mix4 SukiSU 移植补丁
         run: |
-          cd $GITHUB_WORKSPACE
-          git clone --depth=1 https://github.com/SukiSU-Ultra/SukiSU-Ultra.git sukisu
-          cd sukisu && git log -1 --oneline
-          mkdir -p $GITHUB_WORKSPACE/kernel/drivers/kernelsu
-          cp -rL $GITHUB_WORKSPACE/sukisu/kernel/. $GITHUB_WORKSPACE/kernel/drivers/kernelsu/
           cd $GITHUB_WORKSPACE/kernel
+          cp $GITHUB_WORKSPACE/kernel_patches/odin_b11_full.patch /tmp/odin.patch
+          set +e
+          patch -p1 --forward --batch --fuzz=3 < /tmp/odin.patch > /tmp/patch.log 2>&1
+          echo "patch exit=$?"
+          set -e
+          echo "== 失败/跳过统计 =="
+          grep -cE 'FAILED|Reversed|Skip' /tmp/patch.log || true
+          grep -E 'FAILED|Reversed|Skip' /tmp/patch.log | head -30 || true
+          echo "== 生成 .rej 的文件 =="
+          find . -name '*.rej' | head -20
+          echo "== 驱动目录 =="
           ls drivers/kernelsu | head -20
-          echo "== uapi 头 =="
-          ls drivers/kernelsu/include/uapi 2>/dev/null | head -10 || echo "uapi 缺失"
           echo "== 版本号 =="
-          grep -rn "KSU_VERSION" drivers/kernelsu/Makefile | head -5
-          echo "== 是否自带 susfs 扩展 =="
-          ls drivers/kernelsu/extension 2>/dev/null | head -10
+          grep -rn "KSU_VERSION" drivers/kernelsu/Makefile | head -3
+          echo "== seccomp 改动是否到位 =="
+          grep -n "ksu" kernel/seccomp.c | head -10
 
-      - name: 5b. 修 patch_memory.c 的 __p4d_to_phys（5.4 无此函数）
+      - name: 6. 修 5.4 缺 linux/pgtable.h + struct vm_fault const
         run: |
           cd $GITHUB_WORKSPACE/kernel
-          for f in drivers/kernelsu/hook/arm64/patch_memory.c drivers/kernelsu/hook/patch_memory.c; do
-            if [ -f "$f" ]; then
-              python3 -c "import sys; p=sys.argv[1]; s=open(p).read(); s=s.replace('#if defined(p4d_leaf)', '#if defined(p4d_leaf) && defined(__p4d_to_phys)').replace('#if defined(pud_leaf)', '#if defined(pud_leaf) && defined(__pud_to_phys)').replace('#if defined(pmd_leaf)', '#if defined(pmd_leaf) && defined(__pmd_to_phys)'); open(p,'w').write(s)" "$f"
-              echo "已处理 $f"
-              grep -n 'defined(p4d_leaf)' "$f" || true
-            fi
+          find drivers/kernelsu -name '*.c' -o -name '*.h' | xargs grep -ln 'linux/pgtable.h' 2>/dev/null | while read f; do
+            sed -i 's|#include <linux/pgtable.h>|#include <asm/pgtable.h>|' "$f"; echo "pgtable fixed: $f"
           done
+          find drivers/kernelsu -name '*.rej' -delete 2>/dev/null || true
+          python3 -c "p='include/linux/mm.h'; s=open(p).read(); i=s.index('struct vm_fault {'); j=s.index(chr(10)+'};', i); blk=s[i:j]; s2=s[:i]+(blk.replace(chr(9)+'const struct {', chr(9)+'struct {', 1) if (chr(9)+'const struct {') in blk else blk)+s[j:]; open(p,'w').write(s2); print('vm_fault fixed' if s2!=s else 'no const found')"
 
-      - name: 6. 修 struct vm_fault 的 const 匿名结构
+      - name: 7. 写入 defconfig（SukiSU + susfs）
         run: |
           cd $GITHUB_WORKSPACE/kernel
-          python3 -c "p='include/linux/mm.h'; s=open(p).read(); i=s.index('struct vm_fault {'); j=s.index(chr(10)+'};', i); blk=s[i:j]; s2=s[:i]+blk.replace(chr(9)+'const struct {', chr(9)+'struct {', 1)+s[j:] if (chr(9)+'const struct {') in blk else s; open(p,'w').write(s2); print('vm_fault const removed' if s2!=s else 'no const found')"
-
-      - name: 7. 写入 defconfig（SukiSU，先不开 susfs）
-        run: |
-          cd $GITHUB_WORKSPACE/kernel
-          printf '%s\n' '' '# ---- SukiSU-Ultra ----' 'CONFIG_KSU=y' 'CONFIG_KSU_MANUAL_SU=y' '# CONFIG_KPM is not set' '# CONFIG_KSU_DEBUG is not set' 'CONFIG_KPROBES=y' 'CONFIG_KRETPROBES=y' 'CONFIG_KALLSYMS=y' 'CONFIG_KALLSYMS_ALL=y' 'CONFIG_MODULES=y' 'CONFIG_OVERLAY_FS=y' 'CONFIG_TMPFS_XATTR=y' 'CONFIG_TMPFS_POSIX_ACL=y' 'CONFIG_EXT4_FS=y' >> arch/arm64/configs/odin_defconfig
-          tail -22 arch/arm64/configs/odin_defconfig
+          printf '%s\n' '' '# ---- SukiSU-Ultra + susfs ----' 'CONFIG_KSU=y' 'CONFIG_KSU_MANUAL_SU=y' 'CONFIG_KSU_SUSFS=y' 'CONFIG_KSU_SUSFS_HAS_MAGIC_MOUNT=y' 'CONFIG_KSU_SUSFS_SUS_PATH=y' 'CONFIG_KSU_SUSFS_SUS_MOUNT=y' 'CONFIG_KSU_SUSFS_AUTO_ADD_SUS_KSU_DEFAULT_MOUNT=y' 'CONFIG_KSU_SUSFS_AUTO_ADD_SUS_BIND_MOUNT=y' 'CONFIG_KSU_SUSFS_SUS_KSTAT=y' 'CONFIG_KSU_SUSFS_TRY_UMOUNT=y' 'CONFIG_KSU_SUSFS_AUTO_ADD_TRY_UMOUNT_FOR_BIND_MOUNT=y' 'CONFIG_KSU_SUSFS_SPOOF_UNAME=y' 'CONFIG_KSU_SUSFS_ENABLE_LOG=y' 'CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS=y' 'CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG=y' 'CONFIG_KSU_SUSFS_OPEN_REDIRECT=y' 'CONFIG_KSU_SUSFS_SUS_SU=y' '# CONFIG_KPM is not set' 'CONFIG_KPROBES=y' 'CONFIG_KRETPROBES=y' 'CONFIG_KALLSYMS=y' 'CONFIG_KALLSYMS_ALL=y' 'CONFIG_MODULES=y' 'CONFIG_OVERLAY_FS=y' 'CONFIG_TMPFS_XATTR=y' 'CONFIG_TMPFS_POSIX_ACL=y' 'CONFIG_EXT4_FS=y' >> arch/arm64/configs/odin_defconfig
+          tail -30 arch/arm64/configs/odin_defconfig
 
       - name: 8. 编译内核
         run: |
           cd $GITHUB_WORKSPACE/kernel
           export PATH=$HOME/clang/bin:$PATH
-          make -j$(nproc) O=out ARCH=arm64 CC=clang LLVM=1 LLVM_IAS=1 CLANG_TRIPLE=aarch64-linux-gnu- CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi- odin_defconfig > cfg.log 2>&1 || { tail -60 cfg.log; exit 1; }
+          make -j$(nproc) O=out ARCH=arm64 CC=clang LLVM=1 LLVM_IAS=1 CLANG_TRIPLE=aarch64-linux-gnu- CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi- odin_defconfig > cfg.log 2>&1 || { tail -40 cfg.log; exit 1; }
           echo "== config 关键项 =="
-          grep -E "KSU|KPROBES=|KALLSYMS_ALL|EXT4_FS=" out/.config | head -30
+          grep -E "KSU|SUSFS|KPROBES=|KALLSYMS_ALL|EXT4_FS=" out/.config | head -40
           set -o pipefail
-          make -j$(nproc) O=out ARCH=arm64 CC=clang LLVM=1 LLVM_IAS=1 CLANG_TRIPLE=aarch64-linux-gnu- CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi- Image 2>&1 | tee build.log | grep -E "error|Error|Image|warning: unused" | tail -60 || true
+          make -j$(nproc) O=out ARCH=arm64 CC=clang LLVM=1 LLVM_IAS=1 CLANG_TRIPLE=aarch64-linux-gnu- CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi- Image 2>&1 | tee build.log | grep -E "error|Error|Image" | tail -60 || true
           ls -lh out/arch/arm64/boot/Image*
 
       - name: 9. 收集产物
@@ -107,6 +100,8 @@ jobs:
           cp -v kernel/out/arch/arm64/boot/Image* dist/ 2>/dev/null || true
           cp -v kernel/out/.config dist/config.txt 2>/dev/null || true
           cp -v kernel/cfg.log dist/ 2>/dev/null || true
+          cp -v kernel/build.log dist/ 2>/dev/null || true
+          cp -v /tmp/patch.log dist/ 2>/dev/null || true
           ls -lh dist
 
       - name: 10. 上传产物
