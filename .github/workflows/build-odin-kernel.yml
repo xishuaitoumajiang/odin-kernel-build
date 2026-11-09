@@ -43,41 +43,47 @@ jobs:
           cd $GITHUB_WORKSPACE
           git clone --depth=1 -b master https://github.com/MrNya907/xiaomi_kernel_odin.git kernel
           cd kernel && git log -1 --oneline
-          ls -l arch/arm64/configs/odin_defconfig
-          echo "== 树内旧 kernelsu =="
-          ls drivers/kernelsu 2>/dev/null | head -5 || echo 无
           rm -rf drivers/kernelsu
-          echo "== 删除后 Makefile/Kconfig 引用 =="
+          echo "== 删除后剩余引用 =="
           grep -n kernelsu drivers/Makefile drivers/Kconfig || true
-          echo "== 内核自带 susfs =="
-          ls -l fs/susfs.c fs/sus_su.c 2>/dev/null || echo 无
+          echo "== 树内 susfs =="
+          ls -l fs/susfs.c fs/sus_su.c include/linux/susfs.h 2>/dev/null || echo 无
+          grep -n susfs fs/Makefile || true
 
-      - name: 5. 集成 KernelSU-Next legacy
+      - name: 5. 换成 SukiSU-Ultra 4.x 驱动源码
         run: |
+          cd $GITHUB_WORKSPACE
+          git clone --depth=1 https://github.com/SukiSU-Ultra/SukiSU-Ultra.git sukisu
+          cd sukisu && git log -1 --oneline
+          cp -r kernel $GITHUB_WORKSPACE/kernel/drivers/kernelsu
           cd $GITHUB_WORKSPACE/kernel
-          curl -LSs "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/next/kernel/setup.sh" | bash -s legacy
-          echo "== 校验 =="
-          ls -ld drivers/kernelsu
-          ls drivers/kernelsu | head -10
-          grep -n "KSU_SYSCALL_TABLE_HOOK" drivers/kernelsu/Kconfig
-          grep -n kernelsu drivers/Makefile drivers/Kconfig || true
+          ls drivers/kernelsu | head -20
+          echo "== 版本号 =="
+          grep -rn "KSU_VERSION" drivers/kernelsu/Makefile | head -5
+          echo "== 是否自带 susfs 扩展 =="
+          ls drivers/kernelsu/extension 2>/dev/null | head -10
 
       - name: 5b. 修 patch_memory.c 的 __p4d_to_phys（5.4 无此函数）
         run: |
           cd $GITHUB_WORKSPACE/kernel
-          python3 -c "p='drivers/kernelsu/hook/patch_memory.c'; s=open(p).read(); s=s.replace('#if defined(p4d_leaf)', '#if defined(p4d_leaf) && defined(__p4d_to_phys)').replace('#if defined(pud_leaf)', '#if defined(pud_leaf) && defined(__pud_to_phys)').replace('#if defined(pmd_leaf)', '#if defined(pmd_leaf) && defined(__pmd_to_phys)'); open(p,'w').write(s); print('p4d guard patched')"
-          grep -n 'defined(p4d_leaf)' drivers/kernelsu/hook/patch_memory.c
+          for f in drivers/kernelsu/hook/arm64/patch_memory.c drivers/kernelsu/hook/patch_memory.c; do
+            if [ -f "$f" ]; then
+              python3 -c "import sys; p=sys.argv[1]; s=open(p).read(); s=s.replace('#if defined(p4d_leaf)', '#if defined(p4d_leaf) && defined(__p4d_to_phys)').replace('#if defined(pud_leaf)', '#if defined(pud_leaf) && defined(__pud_to_phys)').replace('#if defined(pmd_leaf)', '#if defined(pmd_leaf) && defined(__pmd_to_phys)'); open(p,'w').write(s)" "$f"
+              echo "已处理 $f"
+              grep -n 'defined(p4d_leaf)' "$f" || true
+            fi
+          done
 
       - name: 6. 修 struct vm_fault 的 const 匿名结构
         run: |
           cd $GITHUB_WORKSPACE/kernel
           python3 -c "p='include/linux/mm.h'; s=open(p).read(); i=s.index('struct vm_fault {'); j=s.index(chr(10)+'};', i); blk=s[i:j]; s2=s[:i]+blk.replace(chr(9)+'const struct {', chr(9)+'struct {', 1)+s[j:] if (chr(9)+'const struct {') in blk else s; open(p,'w').write(s2); print('vm_fault const removed' if s2!=s else 'no const found')"
 
-      - name: 7. 写入 defconfig 开关（非 GKI syscall table hook）
+      - name: 7. 写入 defconfig（SukiSU，先不开 susfs）
         run: |
           cd $GITHUB_WORKSPACE/kernel
-          printf '%s\n' '' '# ---- KernelSU-Next legacy / non-GKI ----' 'CONFIG_KSU=y' '# CONFIG_KSU_MANUAL_HOOK is not set' '# CONFIG_KSU_KPROBES_HOOK is not set' 'CONFIG_KSU_SYSCALL_TABLE_HOOK=y' 'CONFIG_KPROBES=y' 'CONFIG_KRETPROBES=y' 'CONFIG_KALLSYMS_ALL=y' 'CONFIG_MODULES=y' 'CONFIG_OVERLAY_FS=y' 'CONFIG_TMPFS_XATTR=y' 'CONFIG_TMPFS_POSIX_ACL=y' '# ---- susfs ----' 'CONFIG_KSU_SUSFS=y' 'CONFIG_KSU_SUSFS_HAS_MAGIC_MOUNT=y' 'CONFIG_KSU_SUSFS_SUS_PATH=y' 'CONFIG_KSU_SUSFS_SUS_MOUNT=y' 'CONFIG_KSU_SUSFS_AUTO_ADD_SUS_KSU_DEFAULT_MOUNT=y' 'CONFIG_KSU_SUSFS_AUTO_ADD_SUS_BIND_MOUNT=y' 'CONFIG_KSU_SUSFS_SUS_KSTAT=y' 'CONFIG_KSU_SUSFS_TRY_UMOUNT=y' 'CONFIG_KSU_SUSFS_AUTO_ADD_TRY_UMOUNT_FOR_BIND_MOUNT=y' 'CONFIG_KSU_SUSFS_SPOOF_UNAME=y' 'CONFIG_KSU_SUSFS_ENABLE_LOG=y' 'CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS=y' 'CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG=y' 'CONFIG_KSU_SUSFS_OPEN_REDIRECT=y' >> arch/arm64/configs/odin_defconfig
-          tail -28 arch/arm64/configs/odin_defconfig
+          printf '%s\n' '' '# ---- SukiSU-Ultra ----' 'CONFIG_KSU=y' 'CONFIG_KSU_MANUAL_SU=y' '# CONFIG_KPM is not set' '# CONFIG_KSU_DEBUG is not set' 'CONFIG_KPROBES=y' 'CONFIG_KRETPROBES=y' 'CONFIG_KALLSYMS=y' 'CONFIG_KALLSYMS_ALL=y' 'CONFIG_MODULES=y' 'CONFIG_OVERLAY_FS=y' 'CONFIG_TMPFS_XATTR=y' 'CONFIG_TMPFS_POSIX_ACL=y' 'CONFIG_EXT4_FS=y' >> arch/arm64/configs/odin_defconfig
+          tail -22 arch/arm64/configs/odin_defconfig
 
       - name: 8. 编译内核
         run: |
@@ -85,9 +91,9 @@ jobs:
           export PATH=$HOME/clang/bin:$PATH
           make -j$(nproc) O=out ARCH=arm64 CC=clang LLVM=1 LLVM_IAS=1 CLANG_TRIPLE=aarch64-linux-gnu- CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi- odin_defconfig > cfg.log 2>&1 || { tail -60 cfg.log; exit 1; }
           echo "== config 关键项 =="
-          grep -E "KSU|KPROBES=|KALLSYMS_ALL" out/.config | head -30
+          grep -E "KSU|KPROBES=|KALLSYMS_ALL|EXT4_FS=" out/.config | head -30
           set -o pipefail
-          make -j$(nproc) O=out ARCH=arm64 CC=clang LLVM=1 LLVM_IAS=1 CLANG_TRIPLE=aarch64-linux-gnu- CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi- Image 2>&1 | tee build.log | tail -50
+          make -j$(nproc) O=out ARCH=arm64 CC=clang LLVM=1 LLVM_IAS=1 CLANG_TRIPLE=aarch64-linux-gnu- CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi- Image 2>&1 | tee build.log | grep -E "error|Error|Image|warning: unused" | tail -60 || true
           ls -lh out/arch/arm64/boot/Image*
 
       - name: 9. 收集产物
@@ -97,7 +103,6 @@ jobs:
           mkdir -p dist
           cp -v kernel/out/arch/arm64/boot/Image* dist/ 2>/dev/null || true
           cp -v kernel/out/.config dist/config.txt 2>/dev/null || true
-          cp -v kernel/build.log dist/ 2>/dev/null || true
           cp -v kernel/cfg.log dist/ 2>/dev/null || true
           ls -lh dist
 
