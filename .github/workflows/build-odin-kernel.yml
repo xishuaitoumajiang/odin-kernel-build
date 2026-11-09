@@ -46,27 +46,33 @@ jobs:
           ls -lh clang.tar.gz
           mkdir -p clang && tar -xzf clang.tar.gz -C clang
           ./clang/bin/clang --version | head -2
-          ls clang/bin | head
 
-      - name: 4. 拉取内核源码
+      - name: 4. 拉取内核源码 + 移除树内旧版 kernelsu
         run: |
           cd $GITHUB_WORKSPACE
           git clone --depth=1 -b "${{ github.event.inputs.kernel_ref }}" \
             "${{ github.event.inputs.kernel_repo }}" kernel
           cd kernel && git log -1 --oneline
           ls -l arch/arm64/configs/odin_defconfig
-          echo "== 内核自带 susfs 源码 =="
-          ls -l fs/susfs.c fs/sus_su.c 2>/dev/null || echo "无 in-tree susfs"
-          grep -n susfs fs/Makefile || true
+          echo "== 树内旧 kernelsu =="
+          ls drivers/kernelsu 2>/dev/null | head -5 || echo 无
+          rm -rf drivers/kernelsu
+          echo "== 已删除树内 kernelsu，检查 Makefile/Kconfig 引用 =="
+          grep -n kernelsu drivers/Makefile drivers/Kconfig || true
+          echo "== 内核自带 susfs =="
+          ls -l fs/susfs.c fs/sus_su.c 2>/dev/null || echo 无
 
       - name: 5. 集成 KernelSU-Next (legacy)
         run: |
           cd $GITHUB_WORKSPACE/kernel
           curl -LSs "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/next/kernel/setup.sh" | bash -s legacy
-          ls -d KernelSU* 2>/dev/null || true
-          git status --short | head -20
+          echo "== 校验 =="
+          ls -ld drivers/kernelsu
+          ls drivers/kernelsu | head -10
+          grep -n "config KSU_SYSCALL_TABLE_HOOK" drivers/kernelsu/Kconfig
+          grep -n kernelsu drivers/Makefile drivers/Kconfig || true
 
-      - name: 6. 修 struct vm_fault 的 const 匿名结构（clang 不接受）
+      - name: 6. 修 struct vm_fault 的 const 匿名结构
         run: |
           cd $GITHUB_WORKSPACE/kernel
           python3 - <<'EOF'
@@ -76,31 +82,47 @@ jobs:
           j = s.index('\n};', i)
           blk = s[i:j]
           if '\tconst struct {' in blk:
-              blk = blk.replace('\tconst struct {', '\tstruct {', 1)
-              s = s[:i] + blk + s[j:]
+              s = s[:i] + blk.replace('\tconst struct {', '\tstruct {', 1) + s[j:]
               open(p, 'w').write(s)
               print('已去掉 vm_fault 匿名结构的 const')
           else:
               print('未找到 const 匿名结构，跳过')
           EOF
-          sed -n '/struct vm_fault {/,/^};/p' include/linux/mm.h | head -12
 
-      - name: 7. 写入 defconfig 开关
+      - name: 7. 写入 defconfig 开关（非 GKI: syscall table hook）
         run: |
           cd $GITHUB_WORKSPACE/kernel
           cat >> arch/arm64/configs/odin_defconfig <<'EOF'
 
-          # ---- KernelSU Next (legacy, susfs 走内核自带实现) ----
+          # ---- KernelSU-Next legacy / 非 GKI ----
           CONFIG_KSU=y
+          # CONFIG_KSU_MANUAL_HOOK is not set
+          # CONFIG_KSU_KPROBES_HOOK is not set
+          CONFIG_KSU_SYSCALL_TABLE_HOOK=y
           CONFIG_KPROBES=y
-          CONFIG_KPROBE_EVENTS=y
+          CONFIG_KRETPROBES=y
           CONFIG_KALLSYMS_ALL=y
           CONFIG_MODULES=y
           CONFIG_OVERLAY_FS=y
           CONFIG_TMPFS_XATTR=y
           CONFIG_TMPFS_POSIX_ACL=y
+          # ---- susfs（内核自带实现）----
+          CONFIG_KSU_SUSFS=y
+          CONFIG_KSU_SUSFS_HAS_MAGIC_MOUNT=y
+          CONFIG_KSU_SUSFS_SUS_PATH=y
+          CONFIG_KSU_SUSFS_SUS_MOUNT=y
+          CONFIG_KSU_SUSFS_AUTO_ADD_SUS_KSU_DEFAULT_MOUNT=y
+          CONFIG_KSU_SUSFS_AUTO_ADD_SUS_BIND_MOUNT=y
+          CONFIG_KSU_SUSFS_SUS_KSTAT=y
+          CONFIG_KSU_SUSFS_TRY_UMOUNT=y
+          CONFIG_KSU_SUSFS_AUTO_ADD_TRY_UMOUNT_FOR_BIND_MOUNT=y
+          CONFIG_KSU_SUSFS_SPOOF_UNAME=y
+          CONFIG_KSU_SUSFS_ENABLE_LOG=y
+          CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS=y
+          CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG=y
+          CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
           EOF
-          tail -12 arch/arm64/configs/odin_defconfig
+          tail -26 arch/arm64/configs/odin_defconfig
 
       - name: 8. 编译内核
         run: |
@@ -111,17 +133,16 @@ jobs:
             CLANG_TRIPLE=aarch64-linux-gnu- \
             CROSS_COMPILE=aarch64-linux-gnu- \
             CROSS_COMPILE_ARM32=arm-linux-gnueabi- \
-            odin_defconfig > cfg.log 2>&1 || { tail -40 cfg.log; exit 1; }
+            odin_defconfig > cfg.log 2>&1 || { tail -60 cfg.log; exit 1; }
           echo "== config 关键项 =="
-          grep -E "CONFIG_KSU$|CONFIG_KSU_|CONFIG_KPROBES=|CONFIG_SPECULATIVE_PAGE_FAULT" out/.config | head -25
+          grep -E "^CONFIG_KSU|^# CONFIG_KSU|KPROBES=|KALLSYMS_ALL" out/.config | head -30
           set -o pipefail
           make -j$(nproc) O=out ARCH=arm64 \
             CC=clang LLVM=1 LLVM_IAS=1 \
             CLANG_TRIPLE=aarch64-linux-gnu- \
             CROSS_COMPILE=aarch64-linux-gnu- \
             CROSS_COMPILE_ARM32=arm-linux-gnueabi- \
-            Image 2>&1 | tee build.log | tail -60
-          echo "== 产物 =="
+            Image 2>&1 | tee build.log | tail -50
           ls -lh out/arch/arm64/boot/Image*
 
       - name: 9. 收集产物
@@ -130,7 +151,6 @@ jobs:
           cd $GITHUB_WORKSPACE
           mkdir -p dist
           cp -v kernel/out/arch/arm64/boot/Image* dist/ 2>/dev/null || true
-          find kernel/out -name '*.ko' -exec cp -v {} dist/ \; 2>/dev/null || true
           cp -v kernel/out/.config dist/config.txt 2>/dev/null || true
           cp -v kernel/build.log dist/ 2>/dev/null || true
           cp -v kernel/cfg.log dist/ 2>/dev/null || true
