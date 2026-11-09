@@ -13,6 +13,9 @@ jobs:
     timeout-minutes: 300
 
     steps:
+      - name: 0. 检出本仓库（取移植补丁）
+        uses: actions/checkout@v4
+
       - name: 1. 释放磁盘空间
         run: |
           echo "== 清理前 =="; df -h /
