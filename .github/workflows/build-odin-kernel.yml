@@ -55,9 +55,12 @@ jobs:
           cd $GITHUB_WORKSPACE
           git clone --depth=1 https://github.com/SukiSU-Ultra/SukiSU-Ultra.git sukisu
           cd sukisu && git log -1 --oneline
-          cp -r kernel $GITHUB_WORKSPACE/kernel/drivers/kernelsu
+          mkdir -p $GITHUB_WORKSPACE/kernel/drivers/kernelsu
+          cp -rL sukisu/kernel/. $GITHUB_WORKSPACE/kernel/drivers/kernelsu/
           cd $GITHUB_WORKSPACE/kernel
           ls drivers/kernelsu | head -20
+          echo "== uapi 头 =="
+          ls drivers/kernelsu/include/uapi 2>/dev/null | head -10 || echo "uapi 缺失"
           echo "== 版本号 =="
           grep -rn "KSU_VERSION" drivers/kernelsu/Makefile | head -5
           echo "== 是否自带 susfs 扩展 =="
