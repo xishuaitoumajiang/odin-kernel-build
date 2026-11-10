@@ -150,26 +150,7 @@ jobs:
           cd $GITHUB_WORKSPACE/kernel
           mkdir -p out
           cp arch/arm64/configs/odin_defconfig out/.config
-          printf '%s\n' \
-            'CONFIG_KSU=y' \
-            'CONFIG_KSU_FEATURE_ADBROOT=y' \
-            '# CONFIG_KSU_DEBUG is not set' \
-            '# CONFIG_KPM is not set' \
-            'CONFIG_KSU_SUSFS=y' \
-            'CONFIG_KSU_SUSFS_SUS_PATH=y' \
-            'CONFIG_KSU_SUSFS_SUS_MOUNT=y' \
-            'CONFIG_KSU_SUSFS_SUS_KSTAT=y' \
-            'CONFIG_KSU_SUSFS_ENABLE_LOG=y' \
-            'CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS=y' \
-            '# CONFIG_KSU_SUSFS_SUS_MAP is not set' \
-            '# CONFIG_KSU_SUSFS_SPOOF_UNAME is not set' \
-            '# CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG is not set' \
-            '# CONFIG_KSU_SUSFS_OPEN_REDIRECT is not set' \
-            '# CONFIG_KSU_SUSFS_SUS_SU is not set' \
-            '# CONFIG_KSU_SUSFS_TRY_UMOUNT is not set' \
-            '# CONFIG_KSU_SUSFS_AUTO_ADD_SUS_KSU_DEFAULT_MOUNT is not set' \
-            '# CONFIG_KSU_SUSFS_AUTO_ADD_SUS_BIND_MOUNT is not set' \
-            '# CONFIG_KSU_SUSFS_AUTO_ADD_TRY_UMOUNT_FOR_BIND_MOUNT is not set' >> out/.config
+          printf '%s\n' 'CONFIG_KSU=y' 'CONFIG_KSU_FEATURE_ADBROOT=y' '# CONFIG_KSU_DEBUG is not set' 'CONFIG_KPM=y' '# CONFIG_KSU_SUSFS is not set' >> out/.config
           export PATH=$HOME/clang/bin:$PATH
           make O=out ARCH=arm64 CC=clang LLVM=1 LLVM_IAS=1 CLANG_TRIPLE=aarch64-linux-gnu- CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi- olddefconfig > cfg.log 2>&1 || { tail -40 cfg.log; exit 1; }
           grep -E "CONFIG_KSU|CONFIG_SUSFS|CONFIG_KPM|CONFIG_KALLSYMS_ALL|LOCALVERSION=" out/.config | head -25
