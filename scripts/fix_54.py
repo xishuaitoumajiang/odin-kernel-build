@@ -164,7 +164,7 @@ def install_compat_header():
     kb = os.path.join(DRV, "Kbuild")
     s = read(kb)
     if "ku_compat54.h" not in s:
-        s = "ccflags-y += -include $(src)/ku_compat54.h\n" + s
+        s = "ccflags-y += -include $(srctree)/drivers/kernelsu/ku_compat54.h\n" + s
         write(kb, s)
         print("Kbuild force-includes compat54")
 
