@@ -88,9 +88,38 @@ def patch_twa():
         print("TWA_RESUME compat ->", p)
 
 
+def patch_app_profile():
+    p = os.path.join(DRV, "policy", "app_profile.c")
+    if not os.path.exists(p):
+        print("app_profile: missing, skip")
+        return
+    s = read(p)
+    line = "    atomic_set(&current->seccomp.filter_count, 0);\n"
+    if line in s:
+        s = s.replace(line, "#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 9, 0)\n" + line + "#endif\n", 1)
+        write(p, s)
+        print("app_profile patched")
+    else:
+        print("app_profile: filter_count line not found")
+
+
+def relax_werror():
+    p = os.path.join(DRV, "Kbuild")
+    if not os.path.exists(p):
+        return
+    s = read(p)
+    if "-Werror" in s:
+        s = s.replace("-Werror", "-Wno-error")
+        write(p, s)
+        print("Kbuild: -Werror relaxed (诊断轮)")
+
+
 def main():
     patch_obs()
     patch_twa()
+    patch_app_profile()
+    if os.environ.get("KSU_RELAX_WERROR") == "1":
+        relax_werror()
 
 
 if __name__ == "__main__":
