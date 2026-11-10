@@ -88,6 +88,23 @@ def patch_twa():
         print("TWA_RESUME compat ->", p)
 
 
+def patch_cpu_spoof():
+    p = os.path.join(DRV, "extension", "cpu_spoof.c")
+    if not os.path.exists(p):
+        return
+    s = read(p)
+    target = "                        (*curr_cs_ptr)->vdso_clock_mode =\n                            VDSO_CLOCKMODE_ARCHTIMER;\n"
+    if target in s:
+        s = s.replace(
+            target,
+            "#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 6, 0)\n" + target +
+            "#else\n                        (void)curr_cs_ptr;\n#endif\n", 1)
+        write(p, s)
+        print("cpu_spoof patched")
+    else:
+        print("cpu_spoof: pattern not found")
+
+
 def patch_app_profile():
     p = os.path.join(DRV, "policy", "app_profile.c")
     if not os.path.exists(p):
@@ -118,6 +135,7 @@ def main():
     patch_obs()
     patch_twa()
     patch_app_profile()
+    patch_cpu_spoof()
     if os.environ.get("KSU_RELAX_WERROR") == "1":
         relax_werror()
 
