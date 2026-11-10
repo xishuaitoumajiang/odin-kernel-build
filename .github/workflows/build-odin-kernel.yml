@@ -96,6 +96,13 @@ jobs:
           sed -i 's|#if defined(p4d_leaf)|#if defined(p4d_leaf) \&\& defined(__p4d_to_phys)|' drivers/kernelsu/hook/arm64/patch_memory.c
           sed -i 's|copy_to_kernel_nofault(map, src, len)|probe_kernel_write(map, src, len)|' drivers/kernelsu/hook/arm64/patch_memory.c
           grep -n 'p4d_leaf\|probe_kernel_write' drivers/kernelsu/hook/arm64/patch_memory.c
+          printf '%s\n' \
+            '#include <linux/version.h>' \
+            'struct seccomp_filter;' \
+            'void ksu_seccomp_clear_cache(struct seccomp_filter *filter, int nr) { (void)filter; (void)nr; }' \
+            'void ksu_seccomp_allow_cache(struct seccomp_filter *filter, int nr) { (void)filter; (void)nr; }' \
+            > drivers/kernelsu/infra/seccomp_cache.c
+          cat drivers/kernelsu/infra/seccomp_cache.c
           head -6 drivers/kernelsu/feature/sucompat.c
           grep -c 'ksu_copy_from_user_retry' drivers/kernelsu/feature/sucompat.c
 
