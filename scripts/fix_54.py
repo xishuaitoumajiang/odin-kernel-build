@@ -131,11 +131,50 @@ def relax_werror():
         print("Kbuild: -Werror relaxed (诊断轮)")
 
 
+COMPAT_H = """#ifndef __KSU_COMPAT54_H
+#define __KSU_COMPAT54_H
+#include <linux/version.h>
+#include <linux/uaccess.h>
+#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 8, 0)
+static inline long ksu54_strncpy_from_user_nofault(char *dst, const void __user *src, long n)
+{
+	return probe_user_read(dst, src, n);
+}
+static inline long ksu54_copy_from_user_nofault(void *dst, const void __user *src, size_t n)
+{
+	return probe_user_read(dst, src, n);
+}
+static inline long ksu54_copy_to_user_nofault(void __user *dst, const void *src, size_t n)
+{
+	return probe_kernel_write((void *)dst, src, n);
+}
+#define strncpy_from_user_nofault ksu54_strncpy_from_user_nofault
+#define copy_from_user_nofault ksu54_copy_from_user_nofault
+#define copy_to_user_nofault ksu54_copy_to_user_nofault
+#endif
+#endif
+"""
+
+
+def install_compat_header():
+    hp = os.path.join(DRV, "ku_compat54.h")
+    if not os.path.exists(hp):
+        write(hp, COMPAT_H)
+        print("compat54 header written")
+    kb = os.path.join(DRV, "Kbuild")
+    s = read(kb)
+    if "ku_compat54.h" not in s:
+        s = "ccflags-y += -include $(src)/ku_compat54.h\n" + s
+        write(kb, s)
+        print("Kbuild force-includes compat54")
+
+
 def main():
     patch_obs()
     patch_twa()
     patch_app_profile()
     patch_cpu_spoof()
+    install_compat_header()
     if os.environ.get("KSU_RELAX_WERROR") == "1":
         relax_werror()
 
