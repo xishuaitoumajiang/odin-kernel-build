@@ -99,6 +99,26 @@ jobs:
             'void susfs_parse_priority_app_strings(void) { }' \
             'void susfs_set_current_proc_no_su(void) { }' \
             'void susfs_set_current_proc_umounted_for_zygote_next(void) { }' >> fs/susfs.c
+          sed -i 's|extern struct selinux_state fake_state;|extern struct selinux_state selinux_state;|' security/selinux/selinuxfs.c security/selinux/hooks.c
+          sed -i 's|&fake_state|&selinux_state|g' security/selinux/selinuxfs.c security/selinux/hooks.c
+          grep -rn 'fake_state' security/selinux | head -3 || echo 'fake_state 已清除'
+          printf '%s\n' \
+            'int susfs_add_sus_type(const char *secctx, u32 type_value) { (void)secctx; (void)type_value; return 0; }' \
+            'int susfs_add_sus_avd_allowed_by_type(u32 s_type, u32 t_type, u16 type, u32 orig_avd_allowed)' \
+            '{ (void)s_type; (void)t_type; (void)type; (void)orig_avd_allowed; return 0; }' >> fs/susfs.c
+          printf '%s\n' \
+            'int susfs_add_sus_type(const char *secctx, u32 type_value);' \
+            'int susfs_add_sus_avd_allowed_by_type(u32 s_type, u32 t_type, u16 type, u32 orig_avd_allowed);' >> include/linux/susfs.h
+          printf '%s\n' \
+            '#include <linux/module.h>' \
+            '#include <linux/net.h>' \
+            '#include <linux/types.h>' \
+            'struct sock *rekernel_netlink;' \
+            'int rekernel_netlink_unit;' > drivers/kernelsu/rekernel_stub.c
+          if ! grep -q rekernel_stub drivers/kernelsu/Makefile; then
+            printf '%s\n' 'obj-$(CONFIG_KSU) += rekernel_stub.o' >> drivers/kernelsu/Makefile
+          fi
+          echo "stubs done"
           printf '%s\n' \
             '#ifndef __KSU_COMPAT54_H' \
             '#define __KSU_COMPAT54_H' \
