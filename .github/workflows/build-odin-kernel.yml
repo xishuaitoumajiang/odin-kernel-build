@@ -13,7 +13,7 @@ jobs:
     timeout-minutes: 300
 
     steps:
-      - name: 0. 检出本仓库
+      - name: 0. 检出本仓库（取移植补丁）
         uses: actions/checkout@v4
 
       - name: 1. 释放磁盘空间
@@ -40,44 +40,36 @@ jobs:
           mkdir -p clang && tar -xzf clang.tar.gz -C clang
           ./clang/bin/clang --version | head -2
 
-      - name: 4. 拉取内核源码（自带 susfs v2.1.0 的 odin 5.4.281）
+      - name: 4. 拉取内核（liqidecg odin 5.4.281 + susfs v2.1.0）
         run: |
           cd $GITHUB_WORKSPACE
           git clone --depth=1 -b main https://github.com/liqidecg/xiaomi_kernel_odin.git kernel
           cd kernel
           git log -1 --oneline
-          head -4 Makefile
           grep -n 'SUSFS_VERSION' include/linux/susfs.h
-          grep -nE 'kernelsu|KSU' drivers/Makefile drivers/Kconfig
-          ls drivers/kernelsu 2>/dev/null || echo "驱动目录不存在（预期）"
 
-      - name: 5. 放入 SukiSU 4.x 驱动并补 susfs Kconfig
+      - name: 5. 从作者补丁还原 5.4 已验证驱动
         run: |
           cd $GITHUB_WORKSPACE
-          git clone --depth=1 https://github.com/SukiSU-Ultra/SukiSU-Ultra.git sukisu
+          git clone --depth=1 -b master https://github.com/MrNya907/xiaomi_kernel_odin.git legacy
+          cd legacy
+          set +e
+          git apply -p1 --reject --whitespace=nowarn $GITHUB_WORKSPACE/kernel_patches/odin_b11_full.patch > /tmp/patch.log 2>&1
+          echo "apply exit=$?"
+          set -e
+          grep -E 'error:|rejected' /tmp/patch.log | head -10 || true
+          ls drivers/kernelsu | head -20
+          ls drivers/kernelsu/susfs 2>/dev/null | head
+          cd $GITHUB_WORKSPACE
           rm -rf kernel/drivers/kernelsu
           mkdir -p kernel/drivers/kernelsu
-          cp -aL sukisu/kernel/. kernel/drivers/kernelsu/
-          ls kernel/drivers/kernelsu | head -20
-          head -20 kernel/drivers/kernelsu/Kconfig
-          printf '%s\n' '' 'menu "KernelSU - SUSFS"' \
-            'config KSU_SUSFS' '	bool "Enable susfs"' '	default n' \
-            'config KSU_SUSFS_SUS_PATH' '	bool "sus_path"' '	depends on KSU_SUSFS' '	default y' \
-            'config KSU_SUSFS_SUS_MOUNT' '	bool "sus_mount"' '	depends on KSU_SUSFS' '	default y' \
-            'config KSU_SUSFS_SUS_KSTAT' '	bool "sus_kstat"' '	depends on KSU_SUSFS' '	default y' \
-            'config KSU_SUSFS_SPOOF_UNAME' '	bool "spoof uname"' '	depends on KSU_SUSFS' '	default y' \
-            'config KSU_SUSFS_ENABLE_LOG' '	bool "susfs log"' '	depends on KSU_SUSFS' '	default y' \
-            'config KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS' '	bool "hide ksu/susfs symbols"' '	depends on KSU_SUSFS' '	default y' \
-            'config KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG' '	bool "spoof cmdline/bootconfig"' '	depends on KSU_SUSFS' '	default y' \
-            'config KSU_SUSFS_OPEN_REDIRECT' '	bool "open redirect"' '	depends on KSU_SUSFS' '	default y' \
-            'config KSU_SUSFS_SUS_MAP' '	bool "sus_map"' '	depends on KSU_SUSFS' '	default y' \
-            'endmenu' >> kernel/drivers/kernelsu/Kconfig
-          tail -5 kernel/drivers/kernelsu/Kconfig
+          rsync -a legacy/drivers/kernelsu/ kernel/drivers/kernelsu/
+          echo "== 驱动已放入 =="
+          ls kernel/drivers/kernelsu | head -25
 
-      - name: 6. 修损坏头文件与 5.4 兼容
+      - name: 6. 兼容处理（坏头文件 / pgtable / susfs 新版接口桩）
         run: |
           cd $GITHUB_WORKSPACE/kernel
-          echo "== 修复 techpack 里存成路径文本的坏头文件 =="
           for f in $(find techpack -name '*.h' -size -300c); do
             c=$(cat "$f" 2>/dev/null | tr -d '\r\n')
             case "$c" in
@@ -89,40 +81,58 @@ jobs:
             sed -i 's|#include <linux/pgtable.h>|#include <asm/pgtable.h>|' "$f"
             echo "pgtable fixed: $f"
           done
-          sed -i 's|copy_from_user_nofault(to, from, count)|probe_user_read(to, from, count)|' drivers/kernelsu/kernel_compat.h
-          grep -n 'probe_user_read' drivers/kernelsu/kernel_compat.h
-          sed -i 's|strncpy_from_user_nofault(path, \*filename_user, sizeof(path));|ksu_copy_from_user_retry(path, *filename_user, sizeof(path));|g' drivers/kernelsu/feature/sucompat.c
-          sed -i '1i #include "kernel_compat.h"' drivers/kernelsu/feature/sucompat.c
-          sed -i 's|#if defined(p4d_leaf)|#if defined(p4d_leaf) \&\& defined(__p4d_to_phys)|' drivers/kernelsu/hook/arm64/patch_memory.c
-          sed -i 's|copy_to_kernel_nofault(map, src, len)|probe_kernel_write(map, src, len)|' drivers/kernelsu/hook/arm64/patch_memory.c
-          grep -n 'p4d_leaf\|probe_kernel_write' drivers/kernelsu/hook/arm64/patch_memory.c
+          grep -rln 'linux/pgtable.h' drivers/kernelsu || echo "pgtable 无残留"
           printf '%s\n' \
-            '#include <linux/version.h>' \
-            'struct seccomp_filter;' \
-            'void ksu_seccomp_clear_cache(struct seccomp_filter *filter, int nr) { (void)filter; (void)nr; }' \
-            'void ksu_seccomp_allow_cache(struct seccomp_filter *filter, int nr) { (void)filter; (void)nr; }' \
-            > drivers/kernelsu/infra/seccomp_cache.c
-          cat drivers/kernelsu/infra/seccomp_cache.c
-          KSU_RELAX_WERROR=1 python3 $GITHUB_WORKSPACE/scripts/fix_54.py $GITHUB_WORKSPACE/kernel
-          grep -n 'handle_event' drivers/kernelsu/manager/pkg_observer.c
-          head -6 drivers/kernelsu/feature/sucompat.c
-          grep -c 'ksu_copy_from_user_retry' drivers/kernelsu/feature/sucompat.c
+            '' \
+            '/* compat: susfs v2.1 缺的新接口 */' \
+            '#ifndef CMD_SUSFS_SET_PRIORITY_UID_FILTER' \
+            '#define CMD_SUSFS_SET_PRIORITY_UID_FILTER 0x60030' \
+            '#endif' \
+            'void susfs_set_priority_uid_filter(void __user **user_info);' \
+            'void susfs_parse_priority_app_strings(void);' >> include/linux/susfs.h
+          printf '%s\n' \
+            '' \
+            '/* compat: susfs v2.1 缺的新接口桩实现 */' \
+            'void susfs_set_priority_uid_filter(void __user **user_info) { (void)user_info; }' \
+            'void susfs_parse_priority_app_strings(void) { }' >> fs/susfs.c
+          tail -5 include/linux/susfs.h
+          tail -4 fs/susfs.c
 
-      - name: 7. 用 odin_defconfig 配置
+      - name: 7. 配置（odin_defconfig + KSU/susfs 开关）
         run: |
           cd $GITHUB_WORKSPACE/kernel
           mkdir -p out
           cp arch/arm64/configs/odin_defconfig out/.config
+          printf '%s\n' \
+            'CONFIG_KSU=y' \
+            'CONFIG_KSU_FEATURE_ADBROOT=y' \
+            '# CONFIG_KSU_DEBUG is not set' \
+            'CONFIG_KPM=y' \
+            'CONFIG_KSU_SUSFS=y' \
+            'CONFIG_KSU_SUSFS_SUS_PATH=y' \
+            'CONFIG_KSU_SUSFS_SUS_MOUNT=y' \
+            'CONFIG_KSU_SUSFS_SUS_MAP=y' \
+            'CONFIG_KSU_SUSFS_SUS_KSTAT=y' \
+            'CONFIG_KSU_SUSFS_SPOOF_UNAME=y' \
+            'CONFIG_KSU_SUSFS_ENABLE_LOG=y' \
+            'CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS=y' \
+            'CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG=y' \
+            'CONFIG_KSU_SUSFS_OPEN_REDIRECT=y' \
+            '# CONFIG_KSU_SUSFS_SUS_SU is not set' \
+            '# CONFIG_KSU_SUSFS_TRY_UMOUNT is not set' \
+            '# CONFIG_KSU_SUSFS_AUTO_ADD_SUS_KSU_DEFAULT_MOUNT is not set' \
+            '# CONFIG_KSU_SUSFS_AUTO_ADD_SUS_BIND_MOUNT is not set' \
+            '# CONFIG_KSU_SUSFS_AUTO_ADD_TRY_UMOUNT_FOR_BIND_MOUNT is not set' >> out/.config
           export PATH=$HOME/clang/bin:$PATH
           make O=out ARCH=arm64 CC=clang LLVM=1 LLVM_IAS=1 CLANG_TRIPLE=aarch64-linux-gnu- CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi- olddefconfig > cfg.log 2>&1 || { tail -40 cfg.log; exit 1; }
-          grep -E "CONFIG_KSU|CONFIG_KPM|CONFIG_KPROBES=|CONFIG_KALLSYMS_ALL|LOCALVERSION=" out/.config | head -20
+          grep -E "CONFIG_KSU|CONFIG_SUSFS|CONFIG_KPM|CONFIG_KALLSYMS_ALL|LOCALVERSION=" out/.config | head -25
 
       - name: 8. 编译内核
         run: |
           cd $GITHUB_WORKSPACE/kernel
           export PATH=$HOME/clang/bin:$PATH
           set -o pipefail
-          make -j$(nproc) O=out ARCH=arm64 CC=clang LLVM=1 LLVM_IAS=1 CLANG_TRIPLE=aarch64-linux-gnu- CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi- Image 2>&1 | tee build.log | grep -E "error|Error|Image" | tail -80 || true
+          make -j$(nproc) O=out ARCH=arm64 CC=clang LLVM=1 LLVM_IAS=1 CLANG_TRIPLE=aarch64-linux-gnu- CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi- Image 2>&1 | tee build.log | grep -E "error|Image is ready|Kernel:" | tail -60 || true
           ls -lh out/arch/arm64/boot/Image* 2>/dev/null || echo "无 Image"
 
       - name: 9. 收集产物
@@ -134,6 +144,7 @@ jobs:
           cp -v kernel/out/.config dist/config.txt 2>/dev/null || true
           cp -v kernel/cfg.log dist/ 2>/dev/null || true
           cp -v kernel/build.log dist/ 2>/dev/null || true
+          cp -v /tmp/patch.log dist/ 2>/dev/null || true
           ls -lh dist
 
       - name: 10. 上传产物
