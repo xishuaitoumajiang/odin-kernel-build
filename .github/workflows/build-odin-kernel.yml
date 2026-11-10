@@ -103,7 +103,7 @@ jobs:
             'void ksu_seccomp_allow_cache(struct seccomp_filter *filter, int nr) { (void)filter; (void)nr; }' \
             > drivers/kernelsu/infra/seccomp_cache.c
           cat drivers/kernelsu/infra/seccomp_cache.c
-          python3 $GITHUB_WORKSPACE/scripts/fix_54.py kernel
+          python3 $GITHUB_WORKSPACE/scripts/fix_54.py $GITHUB_WORKSPACE/kernel
           grep -n 'handle_event' drivers/kernelsu/manager/pkg_observer.c
           head -6 drivers/kernelsu/feature/sucompat.c
           grep -c 'ksu_copy_from_user_retry' drivers/kernelsu/feature/sucompat.c
