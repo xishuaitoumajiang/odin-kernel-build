@@ -99,8 +99,7 @@ jobs:
             'void susfs_parse_priority_app_strings(void) { }' \
             'void susfs_set_current_proc_no_su(void) { }' \
             'void susfs_set_current_proc_umounted_for_zygote_next(void) { }' >> fs/susfs.c
-          sed -i 's|extern struct selinux_state fake_state;|extern struct selinux_state selinux_state;|' security/selinux/selinuxfs.c security/selinux/hooks.c
-          sed -i 's|&fake_state|&selinux_state|g' security/selinux/selinuxfs.c security/selinux/hooks.c
+          sed -i 's|fake_state|selinux_state|g' security/selinux/selinuxfs.c security/selinux/hooks.c
           grep -rn 'fake_state' security/selinux | head -3 || echo 'fake_state 已清除'
           printf '%s\n' \
             'int susfs_add_sus_type(const char *secctx, u32 type_value) { (void)secctx; (void)type_value; return 0; }' \
