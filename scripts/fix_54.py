@@ -21,6 +21,9 @@ def write(p, s):
 
 def patch_obs():
     p = os.path.join(DRV, "manager", "pkg_observer.c")
+    if not os.path.exists(p):
+        print("pkg_observer: missing, skip")
+        return
     s = read(p)
     old = """static const struct fsnotify_ops ksu_ops = {
     .handle_inode_event = ksu_handle_inode_event,
@@ -71,8 +74,23 @@ static const struct fsnotify_ops ksu_ops = {
     print("pkg_observer patched")
 
 
+def patch_twa():
+    import glob
+    blk = "#ifndef TWA_RESUME\n#define TWA_RESUME true\n#endif\n"
+    for p in glob.glob(os.path.join(DRV, "**", "*.c"), recursive=True):
+        s = read(p)
+        if "TWA_RESUME" not in s:
+            continue
+        if "#define TWA_RESUME" in s:
+            continue
+        s = blk + s
+        write(p, s)
+        print("TWA_RESUME compat ->", p)
+
+
 def main():
     patch_obs()
+    patch_twa()
 
 
 if __name__ == "__main__":
