@@ -113,7 +113,8 @@ jobs:
             '#include <linux/net.h>' \
             '#include <linux/types.h>' \
             'struct sock *rekernel_netlink;' \
-            'int rekernel_netlink_unit;' > drivers/kernelsu/rekernel_stub.c
+            'int rekernel_netlink_unit;' \
+            'bool ksu_selinux_hide_running;' > drivers/kernelsu/rekernel_stub.c
           if ! grep -q rekernel_stub drivers/kernelsu/Makefile; then
             printf '%s\n' 'obj-$(CONFIG_KSU) += rekernel_stub.o' >> drivers/kernelsu/Makefile
           fi
