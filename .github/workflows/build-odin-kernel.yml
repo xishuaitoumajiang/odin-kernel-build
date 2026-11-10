@@ -89,12 +89,39 @@ jobs:
             '#define CMD_SUSFS_SET_PRIORITY_UID_FILTER 0x60030' \
             '#endif' \
             'void susfs_set_priority_uid_filter(void __user **user_info);' \
-            'void susfs_parse_priority_app_strings(void);' >> include/linux/susfs.h
+            'void susfs_parse_priority_app_strings(void);' \
+            'void susfs_set_current_proc_no_su(void);' \
+            'void susfs_set_current_proc_umounted_for_zygote_next(void);' >> include/linux/susfs.h
           printf '%s\n' \
             '' \
             '/* compat: susfs v2.1 缺的新接口桩实现 */' \
             'void susfs_set_priority_uid_filter(void __user **user_info) { (void)user_info; }' \
-            'void susfs_parse_priority_app_strings(void) { }' >> fs/susfs.c
+            'void susfs_parse_priority_app_strings(void) { }' \
+            'void susfs_set_current_proc_no_su(void) { }' \
+            'void susfs_set_current_proc_umounted_for_zygote_next(void) { }' >> fs/susfs.c
+          printf '%s\n' \
+            '#ifndef __KSU_COMPAT54_H' \
+            '#define __KSU_COMPAT54_H' \
+            '#include <linux/version.h>' \
+            '#include <linux/uaccess.h>' \
+            '#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 8, 0)' \
+            'static inline long ksu54_strncpy_from_user_nofault(char *dst, const void __user *src, long n)' \
+            '{ return probe_user_read(dst, src, n); }' \
+            'static inline long ksu54_copy_from_user_nofault(void *dst, const void __user *src, size_t n)' \
+            '{ return probe_user_read(dst, src, n); }' \
+            'static inline long ksu54_copy_to_user_nofault(void __user *dst, const void *src, size_t n)' \
+            '{ return probe_kernel_write((void *)dst, src, n); }' \
+            '#define strncpy_from_user_nofault ksu54_strncpy_from_user_nofault' \
+            '#define copy_from_user_nofault ksu54_copy_from_user_nofault' \
+            '#define copy_to_user_nofault ksu54_copy_to_user_nofault' \
+            '#endif' \
+            '#endif' > drivers/kernelsu/ku_compat54.h
+          for kf in drivers/kernelsu/Kbuild drivers/kernelsu/Makefile; do
+            if [ -f "$kf" ] && ! grep -q ku_compat54.h "$kf"; then
+              printf '%s\n' 'ccflags-y += -include $(srctree)/drivers/kernelsu/ku_compat54.h' >> "$kf"
+              echo "compat include -> $kf"
+            fi
+          done
           tail -5 include/linux/susfs.h
           tail -4 fs/susfs.c
 
