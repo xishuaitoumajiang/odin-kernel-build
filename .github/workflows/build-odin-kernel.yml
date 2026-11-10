@@ -74,14 +74,19 @@ jobs:
             'endmenu' >> kernel/drivers/kernelsu/Kconfig
           tail -5 kernel/drivers/kernelsu/Kconfig
 
-      - name: 6. 修 5.4 兼容头
+      - name: 6. 修 5.4 兼容问题
         run: |
           cd $GITHUB_WORKSPACE/kernel
           for f in $(grep -rln 'linux/pgtable.h' drivers/kernelsu 2>/dev/null); do
             sed -i 's|#include <linux/pgtable.h>|#include <asm/pgtable.h>|' "$f"
             echo "pgtable fixed: $f"
           done
-          grep -rln 'linux/pgtable.h' drivers/kernelsu || echo "无残留"
+          cp -f drivers/pinctrl/pinctrl-utils.h techpack/audio/soc/pinctrl-utils.h
+          echo "techpack pinctrl-utils.h 已修正: $(wc -c < techpack/audio/soc/pinctrl-utils.h) 字节"
+          sed -i 's|strncpy_from_user_nofault(path, \*filename_user, sizeof(path));|ksu_copy_from_user_retry(path, *filename_user, sizeof(path));|g' drivers/kernelsu/feature/sucompat.c
+          grep -n 'ksu_copy_from_user_retry\|strncpy_from_user_nofault' drivers/kernelsu/feature/sucompat.c
+          grep -q 'kernel_compat.h' drivers/kernelsu/feature/sucompat.c && echo "已包含 compat 头" || sed -i '0,/^#include/s||#include "kernel_compat.h"\n|' drivers/kernelsu/feature/sucompat.c
+          head -12 drivers/kernelsu/feature/sucompat.c
 
       - name: 7. 用 odin_defconfig 配置
         run: |
