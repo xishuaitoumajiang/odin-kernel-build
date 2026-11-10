@@ -93,6 +93,9 @@ jobs:
           grep -n 'probe_user_read' drivers/kernelsu/kernel_compat.h
           sed -i 's|strncpy_from_user_nofault(path, \*filename_user, sizeof(path));|ksu_copy_from_user_retry(path, *filename_user, sizeof(path));|g' drivers/kernelsu/feature/sucompat.c
           sed -i '1i #include "kernel_compat.h"' drivers/kernelsu/feature/sucompat.c
+          sed -i 's|#if defined(p4d_leaf)|#if defined(p4d_leaf) \&\& defined(__p4d_to_phys)|' drivers/kernelsu/hook/arm64/patch_memory.c
+          sed -i 's|copy_to_kernel_nofault(map, src, len)|probe_kernel_write(map, src, len)|' drivers/kernelsu/hook/arm64/patch_memory.c
+          grep -n 'p4d_leaf\|probe_kernel_write' drivers/kernelsu/hook/arm64/patch_memory.c
           head -6 drivers/kernelsu/feature/sucompat.c
           grep -c 'ksu_copy_from_user_retry' drivers/kernelsu/feature/sucompat.c
 
